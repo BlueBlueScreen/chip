@@ -139,6 +139,59 @@ def connect_socket(ip, port):
         sock = connect_socket(ip, port)
 ```
 客户端要考虑的可就多了，得确定自己的ip地址，还要选择端口，还要连接服务器端
+```
+            # 客户端先发后收
+            sock.sendall(IDi + Xi + Ri)
+            data = b''
+            expected_len = MAX_ID_BYTES + 2 * CRYPTO_CORE_RISTRETTO255_BYTES
+            while len(data) < expected_len:
+                data += sock.recv(4096)
+
+        # 解析对方数据
+        IDj = data[:MAX_ID_BYTES]
+        Xj = data[MAX_ID_BYTES:MAX_ID_BYTES + CRYPTO_CORE_RISTRETTO255_BYTES]
+        Rj = data[MAX_ID_BYTES + CRYPTO_CORE_RISTRETTO255_BYTES:expected_len]
+
+        # 清理ID中的空字节
+        clean_idj = IDj.decode('utf-8', errors='replace').rstrip('\x00')
+        print(f"Identified: {clean_idj}")
+
+        # 计算共享密钥
+        alpha = pysodium.crypto_scalarmult_ristretto255(r, Rj)
+        hj_hash = tagged_hash(2, network.encode(), IDj, Xj)
+        hj = pysodium.crypto_core_ristretto255_scalar_reduce(hj_hash)
+        Yi_hj = pysodium.crypto_scalarmult_ristretto255(hj, Yi)
+
+        # 计算中间值
+        Xj_Yi_hj = pysodium.crypto_core_ristretto255_add(Xj, Yi_hj)
+        Rj_Xj_Yi_hj = pysodium.crypto_core_ristretto255_add(Rj, Xj_Yi_hj)
+
+        # 计算beta
+        r_zi = pysodium.crypto_core_ristretto255_scalar_add(r, zi)
+        beta = pysodium.crypto_scalarmult_ristretto255(r_zi, Rj_Xj_Yi_hj)
+
+        # 确定会话顺序
+        is_first = Ri >= Rj  # 字节比较
+
+        # 计算最终密钥
+        combined = b''.join([
+            network.encode(),
+            alpha,
+            beta,
+            IDi if is_first else IDj,
+            Xi if is_first else Xj,
+            Ri if is_first else Rj,
+            IDj if is_first else IDi,
+            Xj if is_first else Xi,
+            Rj if is_first else Ri
+        ])
+        S = hashlib.sha256(combined).digest()
+        print(f"Shared secret: {S.hex()}")
+
+    finally:
+        sock.close()
+```
+最后完成密钥交换后，output共享密钥，得到最后的会话密钥，关闭套接字
 
 
 
